@@ -256,71 +256,70 @@ Preencha todas as seções abaixo de forma **clara, objetiva e técnica**.
 
 ### Identificação do Candidato
 
-- **Nome completo:**
-- **GitHub:**
+- **Nome completo:** Mário Vinícius Campinas Souza
+- **GitHub:** <a href="https://github.com/MarioViniciux" target="_blank">MarioViniciux</a>
 
 ---
 
 ## Visão Geral da Solução
 
-Descreva, em poucas palavras:
-
-- Qual é o objetivo do seu projeto
-- O que o sistema embarcado simulado faz
-- Como o usuário interage com ele (se aplicável)
+O projeto tem como objetivo criar uma solução embarcada para controle de qualidade e auditoria em ambientes sensíveis, como áreas refrigeradas e estufas, prevenindo a degradação de insumos e o sobreaquecimento de componentes. Para isso, o sistema simulado monitora continuamente o tempo de abertura de uma porta e a temperatura do ambiente. Ele calcula variações térmicas abruptas e aciona alertas automáticos via comunicação Serial caso a porta permaneça aberta além do limite permitido ou ocorra uma elevação brusca de temperatura, informando também o momento em que o sistema retorna às condições seguras e se estabiliza.
+A interação do usuário com o sistema ocorre diretamente no simulador, onde é possível acionar o botão físico para simular a abertura e o fechamento da porta, além de ajustar manualmente os valores de temperatura lidos pelo sensor MPU6050. O acompanhamento de todas as ações, disparos de alarmes e da normalização do ambiente é feito de forma passiva através da leitura das mensagens de log impressas no terminal da interface Serial.
 
 ---
 
 ## Arquitetura do Sistema Embarcado
 
-Explique a arquitetura lógica do seu projeto, abordando:
+#### Fluxo principal do programa
+- **Inicialização:** o microcontrolador configura os pinos, "acorda" o sensor MPU6050 (desativando o modo sleep via I2C), cria a estrutura inicial de estados e imprime a mensagem obrigatória "Sistema de Monitoramento Inicializado".  
+- **Loop infinito:** a cada iteração, o programa segue uma rotina sequencial:Coleta de Dados: Lê o estado atual do botão e a temperatura instantânea do registrador do MPU6050.  
+- **Análise:** submete os dados às funções lógicas (check_open_door, check_temperature e check_normalization) para validar as regras de negócio.  
+- **Descanso:** pausa o processamento por 100 milissegundos (INTERVALO_LOOP_MS) antes de iniciar o próximo ciclo.
 
-- Fluxo principal do programa (`main.py`)
-- Estrutura de estados, loops ou temporizações
-- Como os componentes interagem entre si
+#### Estrutura de estados e temporizações
+- **Gerenciamento de estado:** o sistema não utiliza funções de bloqueio como grandes time.sleep(). Em vez disso, ele mantém um dicionário (criado pela função new_state()) que atua como uma máquina de estados simples. Este dicionário guarda as flags dos alarmes (alarme_porta_ativo, alarme_termico_ativo), a temperatura_referencia e os carimbos de tempo dos eventos.  
+- **Controle não-bloqueante:** o cálculo do tempo de porta aberta (limite de 5000 ms) e o tempo de estabilização térmica (limite de 600 ms) são feitos utilizando as funções time.ticks_ms() e time.ticks_diff(). Isso calcula a diferença entre o momento atual e o instante em que o evento começou, permitindo que as outras verificações continuem rodando em paralelo.
 
-Se desejar, utilize tópicos ou um pequeno diagrama em texto.
+#### Interação entre os componentes
+- **Botão &#8594; ESP32:** o botão opera como um fim de curso configurado com um resistor interno de pull-up. Quando está pressionado (nível lógico 0), o ESP32 entende que a porta está fechada; ao ser solto (nível lógico 1), o ESP32 detecta a abertura.  
+- **MPU6050 &#8596; ESP32:** a comunicação ocorre via protocolo I2C. O ESP32 requisita dados dos registradores específicos de temperatura do MPU6050, processa o valor bruto (lidando com complemento de dois) e aplica a fórmula matemática para obter o valor em graus Celsius.  
+- **ESP32 &#8594; Serial Monitor:** ao cruzar os dados dos sensores e detectar que os limiares configurados (variação &#916;T &#8805; 3.0&#8451; ou tempo de porta aberta excedido) foram ultrapassados, o ESP32 atua disparando logs de texto específicos via comunicação UART (Serial), que servem tanto para o usuário quanto para a leitura da automação de testes (CI).
 
 ---
 
 ## Componentes Utilizados na Simulação
 
-Liste os principais componentes definidos no `diagram.json`, por exemplo:
+1. **Placa microcontroladora (ESP32 DevKit C v4):** identificada no diagrama pelo ID esp, é o cérebro do sistema embarcado. Responsável por executar o firmware (main.py), coletar os dados dos sensores, processar as lógicas de temporização e de variação térmica, além de gerenciar o envio das mensagens de status pela interface Serial. 
 
-- Tipo de placa utilizada
-- LEDs, botões, sensores, atuadores, etc.
-- Função de cada componente no sistema
+2. **Sensor inercial (MPU6050):** identificado no diagrama pelo ID imu1, atua especificamente como o sensor de temperatura do ambiente monitorado. Comunica-se com o ESP32 via protocolo I2C para fornecer as leituras térmicas utilizadas no cálculo da variação de temperatura (&#916;T).
 
+3. **Botão físico (Pushbutton):** identificado no diagrama pelo ID btn1, atua como um sensor de fim de curso para simular o estado da porta do ambiente (geladeira, estufa, etc.). Ele monitora a integridade física do isolamento: o estado pressionado sinaliza porta fechada, enquanto o estado solto sinaliza porta aberta.
+
+4. **Monitor serial (Interface UART):** presente nas conexões lógicas de transmissão e recepção (TX/RX) do diagrama, serve como interface de comunicação de saída. É por meio dela que o ESP32 transmite logs de inicialização, alertas de exposição prolongada ou degradação térmica, permitindo a leitura tanto pelo usuário quanto pela esteira de testes automatizados (CI).
 ---
 
 ## Decisões Técnicas Relevantes
 
-Explique brevemente decisões importantes tomadas durante o desenvolvimento, como:
-
-- Organização do código
-- Uso de funções, estados ou constantes
-- Estratégias para temporização ou controle lógico
+- **Organização modular do código e funções:** o código no arquivo main.py foi estruturado de maneira modular, separando as lógicas de negócio em funções específicas de leitura (read_temperature, is_door_closed) e de processamento (check_open_door, check_temperature, check_normalization). Essa decisão mantém o laço principal de execução (while True) limpo e de fácil interpretação.
+- **Uso de constantes parametrizadas:** as regras que definem os limiares de acionamento de alarme foram isoladas em constantes globais no início do script, como LIMITE_TEMPO_X (5000 ms) e LIMITE_VARIACAO_Y (3.0&#8451;). Isso permite que os parâmetros do sistema sejam ajustados rapidamente em um único local, sem a necessidade de buscar valores fixos espalhados pelas funções lógicas.
+- **Gerenciamento de estado baseado em dicionário:** o rastreamento contínuo das condições do sistema foi centralizado em uma estrutura de dados de dicionário (gerada pela função new_state()). Em vez de criar múltiplas variáveis globais independentes, esse dicionário consolida informações críticas, como a temperatura de referência, as flags de ativação dos alarmes e os carimbos de tempo (timestamps) de abertura e de estabilização.  
+- **Estratégia de temporização não-bloqueante:** como o firmware deve responder estritamente aos estímulos para validação na esteira de testes (CI) do Wokwi, evitou-se o uso de comandos que parassem a execução, como funções bloqueantes longas. A lógica de controle de tempo foi construída com as funções time.ticks_ms() e time.ticks_diff(), que calculam continuamente a diferença de tempo de forma concorrente às leituras dos sensores no laço principal.
 
 ---
 
 ## Resultados Obtidos
 
-Descreva o comportamento final do sistema:
-
-- O que funciona corretamente
-- Quais requisitos foram atendidos
-- Resultado observado na simulação do Wokwi
+- **O que funciona corretamente:** o firmware realiza com sucesso a leitura contínua do sensor de temperatura MPU6050 via I2C e do estado do botão físico. As lógicas de controle de tempo operam de maneira não-bloqueante, o que permite monitorar os milissegundos decorridos com a porta aberta e calcular a variação térmica (&#916;T) simultaneamente no loop principal.
+- **Quais requisitos foram atendidos:** o código atende a todos os requisitos críticos de automação exigidos pela esteira de testes do Wokwi CI. O microcontrolador imprime com exatidão as mensagens seriais parametrizadas: a mensagem de inicialização, os disparos de falha, e o aviso de segurança e restauração
+- **Resultado observado na simulação do Wokwi:** seguindo os parâmetros estipulados para os testes, ao soltar o botão e mantê-lo assim por 5000 ms ou mais, o alerta de exposição prolongada é acionado no terminal Serial. Se a temperatura subir abruptamente em 3.0°C em relação à referência segura, o alerta de degradação térmica dispara imediatamente. Ao anular os riscos simulados (fechando a porta e normalizando a temperatura lida pelo sensor), o sistema aguarda a janela de estabilização de 600 ms e reporta o retorno bem-sucedido ao seu estado de operação normal.
 
 ---
 
 ## Comentários Adicionais (Opcional)
 
-Utilize este espaço para comentar, se desejar:
-
-- Dificuldades encontradas
-- Limitações da solução
-- Melhorias que você faria com mais tempo
-- Principais aprendizados durante o desafio
+- **Dificuldades encontradas:** o principal desafio técnico foi conciliar a lógica de temporização não-bloqueante para monitorar os dois eventos críticos simultaneamente (tempo de porta aberta e variação térmica) sem pausar o laço principal. Além disso, foi necessário ter uma atenção rigorosa aos detalhes para garantir que todas as mensagens da interface Serial fossem impressas com a grafia exata exigida pela automação de testes do CI.
+- **Limitações da solução:** a utilização do sensor inercial MPU6050 cumpre o requisito de ler a temperatura local, apesar de ser um sensor voltado para giroscópio/acelerômetro. O uso de um sensor dedicado (como um DHT22) seria mais preciso. Outra limitação é o botão físico que simula a porta de forma binária (aberta/fechada), o que não permite detectar cenários onde a porta fica apenas encostada ou com uma pequena fresta.
+- **Melhorias que faria com mais tempo:** seria interessante evoluir o projeto para uma arquitetura IoT completa, adicionando a configuração da rede Wi-Fi do ESP32 para publicar os logs e dados de temperatura em um dashboard na nuvem via protocolo MQTT. Também adicionaria um display local (como um OLED I2C) para que a equipe do ambiente refrigerado pudesse acompanhar o status da temperatura e os alarmes visualmente, sem depender apenas do console Serial.
 
 ---
 
